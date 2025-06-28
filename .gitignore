@@ -139,3 +139,6 @@ local.settings.json
 .host/
 .history/
 requirements.txt
+
+credentials.json
+token.json
