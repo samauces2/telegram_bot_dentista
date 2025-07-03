@@ -348,7 +348,8 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=pr
 #ngrok_url=""#agrega tu URL de ngrok o de azure functions, cada vez que ejecutes ngrok tienes que eliminar el viejo webhook
 #asi : https://api.telegram.org/bot<TOKEN>/deleteWebhook
 
-
+TOKEN=""#token for telegram bot 
+ngrok_url=""
 
 telegram_app = Application.builder().token(TOKEN).build()
 
@@ -365,3 +366,5 @@ function_app.route("webhook", methods=["POST"])(telegram_webhook)
 
 
 
+# Si estás ejecutando localmente, puedes usar el siguiente comando para iniciar la aplicación:
+# python -m azure.functions.core --host
