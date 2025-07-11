@@ -28,10 +28,14 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 '''terminan librerias google clanedar'''
 
-
+#CHECK TODO: terminar la funcion que agrega citas, ya agrega las citas, peor hay que verificar que todos los handlers funcionen correctamente
+#TODO: funcion para cancelar cita
+#TODO: funcion para cambiar cita
+#TODO:
 
 #estados de la conversacion
-SELECCION_HORARIO, CONFIRMAR_NOMBRE, INGRESAR_NOMBRE, SELECCION_SERVICIO = range(4)
+SELECCION_HORARIO, CONFIRMAR_NOMBRE, INGRESAR_NOMBRE, PREGUNTAR_SERVICIO, SELECCION_SERVICIO = range(5)
+INGRESA_CODIGO,REAGENDAR = range(2)
 
 # Servicios y duración en minutos
 SERVICIOS = {
@@ -116,7 +120,7 @@ def get_events(creds):
         print(f"An error occurred: {error}")
     #return InlineKeyboardMarkup(keyboard)
 
-def crear_evento(creds, nombre_paciente, fecha_hora_str):
+def crear_evento(creds, nombre_paciente, fecha_hora_str,duracion):
     try:
         service = build("calendar", "v3", credentials=creds)
         # Parsear la fecha y hora de string tipo '19-06 11:30'
@@ -124,7 +128,7 @@ def crear_evento(creds, nombre_paciente, fecha_hora_str):
         print("esta es la fecha:",fecha)
         fecha_utc = fecha.astimezone(datetime.timezone.utc)
         print("esta es la fecha_utc:",fecha_utc)
-        fecha_fin = fecha_utc + datetime.timedelta(minutes=30)
+        fecha_fin = fecha_utc + datetime.timedelta(minutes=duracion)
         print("esta es la fecha fin:",fecha_fin)
         print("esta es la fechautciso format:",fecha_utc.isoformat())
         eventos_existentes = service.events().list(
@@ -152,21 +156,6 @@ def crear_evento(creds, nombre_paciente, fecha_hora_str):
                 ).execute()
                 print(f"✅ Evento actualizado: {updated_event.get('htmlLink')}")
                 return True, None
-        '''evento = {
-            'summary': f'Cita con {nombre_paciente}',
-            'start': {
-                'dateTime': fecha_utc.isoformat(),
-                'timeZone': 'America/Mexico_City',  # ajusta tu zona si es necesario
-            },
-            'end': {
-                'dateTime': (fecha_utc + datetime.timedelta(minutes=30)).isoformat(),
-                'timeZone': 'America/Mexico_City',
-            },
-            'description': f'Cita dental agendada por el bot con {nombre_paciente}',
-        }
-        event = service.events().insert(calendarId='primary', body=evento).execute()
-        print(f"✅ Evento creado: {event.get('htmlLink')}")
-        return True, None'''
     except HttpError as error:
         print(f"❌ Error al crear el evento: {error}")
         return False, "Error al acceder a Google Calendar."
@@ -176,6 +165,42 @@ def crear_evento(creds, nombre_paciente, fecha_hora_str):
 '''
 handlers para el bot de telegram
 '''
+
+async def ingresa_codigo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("accediste a la funcion ingresa_codigo")
+    message = update.message
+    codigo = message.text.strip()  # Obtener el código ingresado por el usuario
+    print(f"Código ingresado: {codigo}")
+    # Aquí puedes agregar lógica para verificar el código
+    if int(codigo) :  # Ejemplo de verificación simple
+        await message.reply_text("Código correcto. ¿Quieres reagendar tu cita?")
+        keyboard = [
+            [InlineKeyboardButton("Sí", callback_data="reagendar_cita")],
+            [InlineKeyboardButton("No", callback_data="terminar")]
+        ]
+        await message.reply_text("Selecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return REAGENDAR
+    else:
+        await message.reply_text("Código incorrecto. Inténtalo de nuevo.")
+        return INGRESA_CODIGO
+    
+async def reagendar_cita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("accediste a la funcion reagendar_cita")
+    query = update.callback_query
+    await query.answer()
+    if query.data != "reagendar_cita":
+        await query.edit_message_text("Operación cancelada.")
+        return ConversationHandler.END
+    # Aquí puedes agregar lógica para reagendar la cita
+    await query.edit_message_text("Por favor, selecciona un nuevo horario para tu cita:")
+    creds = google_auth()
+    events = get_events(creds)
+    if isinstance(events, InlineKeyboardMarkup):
+        await query.edit_message_reply_markup(reply_markup=events)
+        return SELECCION_HORARIO
+    else:
+        await query.edit_message_text("No hay horarios disponibles en este momento.")
+        return ConversationHandler.END
 
 async def handle_cita_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -274,8 +299,10 @@ async def cancelar_cita(update:Update,context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id # esta linea es lo mismo chat_id = update.message.chat_id
     #await update.message.reply_text(f"usuario: {user_id} tu confirmacion se ha guardado con exito,faltan por confirmar: {cont} ")
     #TODO: agregar codigo borrar la cita de la agenda y preguntar si quiere volver a agendar cita
-    await update.message.reply_text("tu cita se ha cancelado con exito")
-    return
+    #await update.message.reply_text("tu cita se ha cancelado con exito")
+    await update.message.reply_text(text="ingresa tu codigo de cita")
+    return INGRESA_CODIGO
+    #return
 
 async def agendar_cita(update:Update,context: ContextTypes.DEFAULT_TYPE):
     print("funcion agendar_cita invocada")
@@ -307,32 +334,41 @@ async def seleccionar_horario(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(f"¿Tu nombre es: {nombre}?", reply_markup=InlineKeyboardMarkup(keyboard))
     return CONFIRMAR_NOMBRE
 
-async def confirmar_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def confirmar_nombre(update:Update, context: ContextTypes.DEFAULT_TYPE):
     print("accediste a la funcion confirmar nombre")
     query = update.callback_query
     await query.answer()
+    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in SERVICIOS]
     if query.data == "nombre_ok":
-        return await preguntar_servicio(query, context)
-        #return SELECCION_SERVICIO
+        print("el usuario confirmo su nombre")
+        #return await preguntar_servicio(query, context)
+        #if isinstance(update, Update):
+        await query.edit_message_text("¿Qué servicio necesitas?", reply_markup=InlineKeyboardMarkup(keyboard))
+        #else:
+        #    await query.edit_message_text("¿Qué servicio necesitas?", reply_markup=InlineKeyboardMarkup(keyboard))
+        return SELECCION_SERVICIO
     else:
+        print("el usuario no confirmo su nombre")
         await query.edit_message_text("Por favor escribe tu nombre completo:")
+        print("debug1")
         return INGRESAR_NOMBRE
 
 async def ingresar_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("accediste a la funcion ingresar nombre")
-    nombre = update.message.text.strip()
+    message = update.message
+    nombre=message.text.strip()#to remove whitespaes from the beggining and ending of the string
+    #nombre = update.message.text.strip()
+    print("el nombre del usuario: ",nombre)
     context.user_data['nombre'] = nombre
-    #return await preguntar_servicio(update, context)
+    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in SERVICIOS]
+    await message.reply_text("¿Qué servicio necesitas?", reply_markup=InlineKeyboardMarkup(keyboard))
     return SELECCION_SERVICIO
 
-async def preguntar_servicio(update_or_query, context: ContextTypes.DEFAULT_TYPE):
-    print("accediste a la funcion preguntar servicio")
-    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in SERVICIOS]
-    if isinstance(update_or_query, Update):
-        await update_or_query.message.reply_text("¿Qué servicio necesitas?", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update_or_query.edit_message_text("¿Qué servicio necesitas?", reply_markup=InlineKeyboardMarkup(keyboard))
-    return SELECCION_SERVICIO
+#async def preguntar_servicio(update:Update, context: ContextTypes.DEFAULT_TYPE):
+#    print("accediste a la funcion preguntar servicio")
+#    
+#    return SELECCION_SERVICIO
+
 async def seleccionar_servicio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("accediste a la funcion seleccionar servicio")
     query = update.callback_query
@@ -345,12 +381,12 @@ async def seleccionar_servicio(update: Update, context: ContextTypes.DEFAULT_TYP
     duracion = SERVICIOS.get(servicio, 30)
 
     creds = google_auth()
-    #exito, info = crear_evento(creds, nombre, fecha, duracion)
-    #if exito:
-    #    await query.edit_message_text(f"✅ Cita confirmada para {nombre} el {fecha} por servicio de {servicio}.")
-    #else:
-    #    await query.edit_message_text(f"❌ No se pudo agendar la cita: {info}")
-    await query.edit_message_text(f"✅ Cita confirmada para {nombre} el {fecha} por servicio de {servicio}.")
+    #crear_evento(creds, nombre_paciente, fecha_hora_str)
+    exito, info = crear_evento(creds, nombre, fecha, duracion)
+    if exito:
+        await query.edit_message_text(f"✅ Cita confirmada para {nombre} el {fecha} por servicio de {servicio}.")
+    else:
+        await query.edit_message_text(f"❌ No se pudo agendar la cita: {info}")
     return ConversationHandler.END
 
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,27 +404,37 @@ def configurar_bot(application:ApplicationBuilder,TOKEN:str):
     print("accediste a la funcion configurar bot")
     # Configurar manejadores, esto es para ver comandos en los mensajes recibidos
     # Agregar manejador de mensajes desconocidos
+    set_webhook(application,TOKEN)  # Establece el webhook al iniciar
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("agendar_cita", agendar_cita)],
         states={
             SELECCION_HORARIO: [CallbackQueryHandler(seleccionar_horario)],
             CONFIRMAR_NOMBRE: [CallbackQueryHandler(confirmar_nombre)],
             INGRESAR_NOMBRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ingresar_nombre)],
+            #PREGUNTAR_SERVICIO: [CallbackQueryHandler(preguntar_servicio)],  
             SELECCION_SERVICIO: [CallbackQueryHandler(seleccionar_servicio)]
+        },
+        fallbacks=[CommandHandler("cancelar", cancelar)]
+    )
+    conv_handler_cancel = ConversationHandler(
+        entry_points=[CommandHandler("cancelar_cita", cancelar_cita)],
+        states={
+            INGRESA_CODIGO: [MessageHandler(filters.TEXT & ~filters.COMMAND, ingresa_codigo)],
+            REAGENDAR: [CallbackQueryHandler(reagendar_cita)]
+            #PREGUNTAR_SERVICIO: [CallbackQueryHandler(preguntar_servicio)],  
+            #SELECCION_SERVICIO: [CallbackQueryHandler(seleccionar_servicio)]
         },
         fallbacks=[CommandHandler("cancelar", cancelar)]
     )
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(handle_cita_selection, pattern=r"^\d{2}-\d{2}-\d{4} \d{2}:\d{2}$"))
-    application.add_handler(CallbackQueryHandler(handle_nombre_confirmacion, pattern="^nombre_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_nombre_personalizado))
+    application.add_handler(conv_handler_cancel)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
     application.add_handler(CommandHandler("start", lambda update, context: update.message.reply_text("Bot trabajando, usa /help para mas comandos.")))
     application.add_handler(CommandHandler("confirmar_cita", confirmacion))
-    application.add_handler(CommandHandler("cancelar_cita", cancelar_cita))
-    application.add_handler(CommandHandler("agendar_cita", agendar_cita))
-    set_webhook(application,TOKEN)  # Establece el webhook al iniciar
+    #application.add_handler(CommandHandler("cancelar_cita", cancelar_cita))
+    #application.add_handler(CommandHandler("agendar_cita", agendar_cita))
+    
     # Ejecuta el bot
     #application.run_polling()  # Reemplaza start_polling() y idle()
 
@@ -444,8 +490,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=pr
 #TOKEN=""#agrega tu token del bot de telegram aqui
 #ngrok_url=""#agrega tu URL de ngrok o de azure functions, cada vez que ejecutes ngrok tienes que eliminar el viejo webhook
 #asi : https://api.telegram.org/bot<TOKEN>/deleteWebhook
-TOKEN = "" #token de telegram
-ngrok_url=""
 
 
 
